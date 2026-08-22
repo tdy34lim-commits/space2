@@ -45,7 +45,9 @@ def load_data() -> pd.DataFrame:
     lon, lat = Transformer.from_crs("EPSG:5181", "EPSG:4326", always_xy=True).transform(x, y)
     df["lon"] = lon
     df["lat"] = lat
-    return df.dropna(subset=["ADM_CD", "lon", "lat"])
+    # Keep points even where a boundary code is unavailable: they can still be
+    # shown as individual red dispatch markers.
+    return df.dropna(subset=["lon", "lat"])
 
 
 @st.cache_data
@@ -62,7 +64,10 @@ def load_boundaries() -> dict:
         props = feature["properties"]
         code = props.get("ADM_CD") or props.get("adm_cd") or props.get("adm_cd8")
         name = props.get("ADM_NM") or props.get("adm_nm")
-        props["ADM_CD"] = str(code)
+        # The boundary source stores legacy 7-digit codes while the CSV uses
+        # the matching 8-digit statistical code (the final digit is 0).
+        code = str(code)
+        props["ADM_CD"] = f"{code}0" if len(code) == 7 else code
         props["ADM_NM"] = str(name).split()[-1]
     return boundaries
 
@@ -83,19 +88,32 @@ def build_summary(filtered: pd.DataFrame, boundaries: dict) -> pd.DataFrame:
             for feature in boundaries["features"]
         ]
     )
-    summary = (
-        filtered.groupby("ADM_CD", as_index=False)
-        .agg(
-            출동건수=("구급보고서번호", "nunique"),
-            발생연도=("신고연도", label_values),
-            계절=("계절구분명", label_values),
-            평균기온=("시간단위기온", "mean"),
+    resolved = filtered.copy()
+    boundary_codes = set(base["ADM_CD"])
+    name_to_code = base.drop_duplicates("ADM_NM").set_index("ADM_NM")["ADM_CD"]
+    resolved["경계_ADM_CD"] = resolved["ADM_CD"].where(resolved["ADM_CD"].isin(boundary_codes))
+    resolved["경계_ADM_CD"] = resolved["경계_ADM_CD"].fillna(resolved["ADM_NM"].map(name_to_code))
+    resolved = resolved.dropna(subset=["경계_ADM_CD"])
+
+    if resolved.empty:
+        summary = pd.DataFrame(columns=["ADM_CD", "출동건수", "발생연도", "계절", "평균기온"])
+    else:
+        summary = (
+            resolved.groupby("경계_ADM_CD", as_index=False)
+            .agg(
+                출동건수=("구급보고서번호", "nunique"),
+                발생연도=("신고연도", label_values),
+                계절=("계절구분명", label_values),
+                평균기온=("시간단위기온", "mean"),
+            )
+            .rename(columns={"경계_ADM_CD": "ADM_CD"})
         )
-    )
     result = base.merge(summary, on="ADM_CD", how="left")
     result["출동건수"] = result["출동건수"].fillna(0).astype(int)
-    result["발생연도"] = result["발생연도"].fillna("발생 없음")
-    result["계절"] = result["계절"].fillna("발생 없음")
+    # A single-value filter can make pandas retain a nullable integer dtype
+    # here; cast before inserting the text used for no-dispatch areas.
+    result["발생연도"] = result["발생연도"].astype("string").fillna("발생 없음")
+    result["계절"] = result["계절"].astype("string").fillna("발생 없음")
     result["평균기온표시"] = result["평균기온"].map(lambda x: f"{x:.1f}°C" if pd.notna(x) else "정보 없음")
     return result
 
