@@ -14,6 +14,8 @@ DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
 
 SEASON_ORDER = ["봄", "여름", "가을", "겨울"]
+SEASON_COLORS = {"봄": "#2ca25f", "여름": "#e31a1c", "가을": "#f1c40f", "겨울": "#3182bd"}
+TIME_BAND_ORDER = ["00~06시", "06~12시", "12~18시", "18~24시"]
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
@@ -37,6 +39,12 @@ def load_data() -> pd.DataFrame:
 
     report_date = df["신고일자"].astype("string").str.replace(r"\.0$", "", regex=True)
     report_time = df["신고시각"].astype("string").str.replace(r"\.0$", "", regex=True).str.zfill(6)
+    report_hour = pd.to_numeric(report_time.str.slice(0, 2), errors="coerce")
+    df["시간대"] = pd.cut(
+        report_hour,
+        bins=[-1, 5, 11, 17, 23],
+        labels=TIME_BAND_ORDER,
+    ).astype("string")
     df["발생시각표시"] = (
         report_date.str.slice(0, 4)
         + "-"
@@ -70,50 +78,55 @@ def build_map(filtered: pd.DataFrame) -> go.Figure:
         point_data["기온표시"] = point_data["시간단위기온"].map(
             lambda x: f"{x:.1f}°C" if pd.notna(x) else "정보 없음"
         )
-        fig.add_trace(
-            go.Scattermapbox(
-                lon=point_data["lon"],
-                lat=point_data["lat"],
-                mode="markers",
-                marker={"size": 5.5, "color": "#e31a1c", "opacity": 0.82},
-                customdata=point_data[["발생시각표시", "지역표시", "기온표시"]],
-                hovertemplate=(
-                    "<b>온열질환 구급출동</b><br>발생 시기: %{customdata[0]}"
-                    "<br>지역: %{customdata[1]}<br>발생 당시 기온: %{customdata[2]}<extra></extra>"
-                ),
-                name="개별 출동 지점",
+        for season in SEASON_ORDER:
+            season_data = point_data[point_data["계절구분명"] == season]
+            if season_data.empty:
+                continue
+            fig.add_trace(
+                go.Scattermapbox(
+                    lon=season_data["lon"],
+                    lat=season_data["lat"],
+                    mode="markers",
+                    marker={"size": 5.5, "color": SEASON_COLORS[season], "opacity": 0.82},
+                    customdata=season_data[["발생시각표시", "지역표시", "기온표시", "계절구분명"]],
+                    hovertemplate=(
+                        "<b>온열질환 구급출동</b><br>발생 시기: %{customdata[0]}"
+                        "<br>지역: %{customdata[1]}<br>발생 당시 기온: %{customdata[2]}"
+                        "<br>계절: %{customdata[3]}<extra></extra>"
+                    ),
+                    name=season,
+                )
             )
-        )
 
     fig.update_layout(
         mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=710,
-        showlegend=False,
+        legend={"orientation": "h", "y": 0.02, "x": 0.01, "bgcolor": "rgba(255,255,255,0.85)"},
     )
     return fig
 
 
 st.title("서울 온열질환 구급출동 현황")
-st.caption("2020–2022년 출동 지점 기준 · 붉은 원 하나가 온열질환 구급출동 1건을 의미합니다.")
+st.caption("2020–2022년 출동 지점 기준 · 원 하나가 온열질환 구급출동 1건이며 색상은 계절을 뜻합니다.")
 
 data = load_data()
 
 # Filters sit in the upper-right area above the map.
-spacer, year_col, season_col, age_col = st.columns([2.0, 1.15, 1.15, 1.15])
+spacer, year_col, time_col, age_col = st.columns([2.0, 1.15, 1.15, 1.15])
 with year_col:
     selected_year = st.selectbox("연도", ["전체"] + sorted(data["신고연도"].dropna().astype(int).unique().tolist()))
-with season_col:
-    available_seasons = [s for s in SEASON_ORDER if s in set(data["계절구분명"].dropna())]
-    selected_season = st.selectbox("계절", ["전체"] + available_seasons)
+with time_col:
+    available_time_bands = [band for band in TIME_BAND_ORDER if band in set(data["시간대"].dropna())]
+    selected_time_band = st.selectbox("시간대", ["전체"] + available_time_bands)
 with age_col:
     selected_age = st.selectbox("연령대", ["전체", "0~29세", "30~49세", "50세 이상"])
 
 filtered = data.copy()
 if selected_year != "전체":
     filtered = filtered[filtered["신고연도"] == int(selected_year)]
-if selected_season != "전체":
-    filtered = filtered[filtered["계절구분명"] == selected_season]
+if selected_time_band != "전체":
+    filtered = filtered[filtered["시간대"] == selected_time_band]
 if selected_age != "전체":
     filtered = filtered[filtered["연령대"] == selected_age]
 
