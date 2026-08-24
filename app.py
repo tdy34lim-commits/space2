@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import urlopen
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -15,10 +12,6 @@ st.set_page_config(page_title="서울 온열질환 구급출동 지도", page_ic
 
 DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
-SEOUL_BOUNDARIES_URL = (
-    "https://raw.githubusercontent.com/raqoon886/Local_HangJeongDong/"
-    "master/hangjeongdong_%EC%84%9C%EC%9A%B8%ED%8A%B9%EB%B3%84%EC%8B%9C.geojson"
-)
 
 SEASON_ORDER = ["봄", "여름", "가을", "겨울"]
 
@@ -39,109 +32,40 @@ def load_data() -> pd.DataFrame:
         labels=["0~29세", "30~49세", "50세 이상"],
     ).astype("string").fillna("미상")
 
+    # Exclude the one record without an administrative-dong code and records
+    # with an unknown patient age before any filters or displayed counts.
+    df = df.dropna(subset=["ADM_CD", "환자연령"])
+
+    report_date = df["신고일자"].astype("string").str.replace(r"\.0$", "", regex=True)
+    report_time = df["신고시각"].astype("string").str.replace(r"\.0$", "", regex=True).str.zfill(6)
+    df["발생시각표시"] = (
+        report_date.str.slice(0, 4)
+        + "-"
+        + report_date.str.slice(4, 6)
+        + "-"
+        + report_date.str.slice(6, 8)
+        + " "
+        + report_time.str.slice(0, 2)
+        + ":"
+        + report_time.str.slice(2, 4)
+    )
+    df["지역표시"] = (
+        df["시군구명"].astype("string").fillna("")
+        + " "
+        + df["ADM_NM"].astype("string").fillna("")
+    ).str.strip()
+
     # The incident point coordinates are EPSG:5181; Plotly maps need WGS84 longitude/latitude.
     x = pd.to_numeric(df["GIS_X좌표"], errors="coerce").to_numpy()
     y = pd.to_numeric(df["GIS_Y좌표"], errors="coerce").to_numpy()
     lon, lat = Transformer.from_crs("EPSG:5181", "EPSG:4326", always_xy=True).transform(x, y)
     df["lon"] = lon
     df["lat"] = lat
-    # Keep points even where a boundary code is unavailable: they can still be
-    # shown as individual red dispatch markers.
     return df.dropna(subset=["lon", "lat"])
 
 
-@st.cache_data
-def load_boundaries() -> dict:
-    """Fetch public Seoul administrative-dong boundaries at app startup."""
-    try:
-        with urlopen(SEOUL_BOUNDARIES_URL, timeout=30) as response:
-            boundaries = json.load(response)
-    except (URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError("행정동 경계 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.") from error
-
-    # The source uses lowercase property names. Normalize them for the app.
-    for feature in boundaries["features"]:
-        props = feature["properties"]
-        code = props.get("ADM_CD") or props.get("adm_cd") or props.get("adm_cd8")
-        name = props.get("ADM_NM") or props.get("adm_nm")
-        # The boundary source stores legacy 7-digit codes while the CSV uses
-        # the matching 8-digit statistical code (the final digit is 0).
-        code = str(code)
-        props["ADM_CD"] = f"{code}0" if len(code) == 7 else code
-        props["ADM_NM"] = str(name).split()[-1]
-    return boundaries
-
-
-def label_values(values: pd.Series, limit: int = 4) -> str:
-    items = [str(value) for value in values.dropna().unique()]
-    if not items:
-        return "정보 없음"
-    if len(items) <= limit:
-        return ", ".join(items)
-    return ", ".join(items[:limit]) + " 외"
-
-
-def build_summary(filtered: pd.DataFrame, boundaries: dict) -> pd.DataFrame:
-    base = pd.DataFrame(
-        [
-            {"ADM_CD": str(feature["properties"]["ADM_CD"]), "ADM_NM": feature["properties"]["ADM_NM"]}
-            for feature in boundaries["features"]
-        ]
-    )
-    resolved = filtered.copy()
-    boundary_codes = set(base["ADM_CD"])
-    name_to_code = base.drop_duplicates("ADM_NM").set_index("ADM_NM")["ADM_CD"]
-    resolved["경계_ADM_CD"] = resolved["ADM_CD"].where(resolved["ADM_CD"].isin(boundary_codes))
-    resolved["경계_ADM_CD"] = resolved["경계_ADM_CD"].fillna(resolved["ADM_NM"].map(name_to_code))
-    resolved = resolved.dropna(subset=["경계_ADM_CD"])
-
-    if resolved.empty:
-        summary = pd.DataFrame(columns=["ADM_CD", "출동건수", "발생연도", "계절", "평균기온"])
-    else:
-        summary = (
-            resolved.groupby("경계_ADM_CD", as_index=False)
-            .agg(
-                출동건수=("구급보고서번호", "nunique"),
-                발생연도=("신고연도", label_values),
-                계절=("계절구분명", label_values),
-                평균기온=("시간단위기온", "mean"),
-            )
-            .rename(columns={"경계_ADM_CD": "ADM_CD"})
-        )
-    result = base.merge(summary, on="ADM_CD", how="left")
-    result["출동건수"] = result["출동건수"].fillna(0).astype(int)
-    # A single-value filter can make pandas retain a nullable integer dtype
-    # here; cast before inserting the text used for no-dispatch areas.
-    result["발생연도"] = result["발생연도"].astype("string").fillna("발생 없음")
-    result["계절"] = result["계절"].astype("string").fillna("발생 없음")
-    result["평균기온표시"] = result["평균기온"].map(lambda x: f"{x:.1f}°C" if pd.notna(x) else "정보 없음")
-    return result
-
-
-def build_map(summary: pd.DataFrame, filtered: pd.DataFrame, boundaries: dict) -> go.Figure:
+def build_map(filtered: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
-    fig.add_trace(
-        go.Choroplethmapbox(
-            geojson=boundaries,
-            locations=summary["ADM_CD"],
-            z=summary["출동건수"],
-            featureidkey="properties.ADM_CD",
-            colorscale=[[0, "#fff5f0"], [0.35, "#fcbba1"], [0.7, "#fb6a4a"], [1, "#cb181d"]],
-            zmin=0,
-            zmax=max(1, int(summary["출동건수"].max())),
-            marker_line_color="rgba(120, 120, 120, 0.65)",
-            marker_line_width=0.5,
-            colorbar={"title": "출동 건수", "thickness": 14, "x": 0.98, "y": 0.5},
-            customdata=summary[["ADM_NM", "출동건수", "발생연도", "계절", "평균기온표시"]],
-            hovertemplate=(
-                "<b>%{customdata[0]}</b><br>출동 건수: %{customdata[1]}건"
-                "<br>발생 연도: %{customdata[2]}<br>계절: %{customdata[3]}"
-                "<br>발생 당시 평균 기온: %{customdata[4]}<extra></extra>"
-            ),
-            name="행정동 출동 건수",
-        )
-    )
-
     if not filtered.empty:
         point_data = filtered.copy()
         point_data["기온표시"] = point_data["시간단위기온"].map(
@@ -152,12 +76,11 @@ def build_map(summary: pd.DataFrame, filtered: pd.DataFrame, boundaries: dict) -
                 lon=point_data["lon"],
                 lat=point_data["lat"],
                 mode="markers",
-                marker={"size": 10, "color": "#e31a1c", "opacity": 0.8},
-                customdata=point_data[["ADM_NM", "신고연도", "계절구분명", "연령대", "기온표시"]],
+                marker={"size": 11, "color": "#e31a1c", "opacity": 0.82},
+                customdata=point_data[["발생시각표시", "지역표시", "기온표시"]],
                 hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>발생 연도: %{customdata[1]}"
-                    "<br>계절: %{customdata[2]}<br>연령대: %{customdata[3]}"
-                    "<br>발생 당시 기온: %{customdata[4]}<extra></extra>"
+                    "<b>온열질환 구급출동</b><br>발생 시기: %{customdata[0]}"
+                    "<br>지역: %{customdata[1]}<br>발생 당시 기온: %{customdata[2]}<extra></extra>"
                 ),
                 name="개별 출동 지점",
             )
@@ -167,20 +90,15 @@ def build_map(summary: pd.DataFrame, filtered: pd.DataFrame, boundaries: dict) -
         mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.6},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=710,
-        legend={"orientation": "h", "y": 0.02, "x": 0.01, "bgcolor": "rgba(255,255,255,0.8)"},
+        showlegend=False,
     )
     return fig
 
 
 st.title("서울 온열질환 구급출동 현황")
-st.caption("2020–2022년 출동 지점 기준 · 행정동 색상은 출동 건수, 빨간 점은 개별 출동 지점")
+st.caption("2020–2022년 출동 지점 기준 · 붉은 원 하나가 온열질환 구급출동 1건을 의미합니다.")
 
 data = load_data()
-try:
-    boundaries = load_boundaries()
-except RuntimeError as error:
-    st.error(str(error))
-    st.stop()
 
 # Filters sit in the upper-right area above the map.
 spacer, year_col, season_col, age_col = st.columns([2.0, 1.15, 1.15, 1.15])
@@ -190,7 +108,7 @@ with season_col:
     available_seasons = [s for s in SEASON_ORDER if s in set(data["계절구분명"].dropna())]
     selected_season = st.selectbox("계절", ["전체"] + available_seasons)
 with age_col:
-    selected_age = st.selectbox("연령대", ["전체", "0~29세", "30~49세", "50세 이상", "미상"])
+    selected_age = st.selectbox("연령대", ["전체", "0~29세", "30~49세", "50세 이상"])
 
 filtered = data.copy()
 if selected_year != "전체":
@@ -200,11 +118,10 @@ if selected_season != "전체":
 if selected_age != "전체":
     filtered = filtered[filtered["연령대"] == selected_age]
 
-summary = build_summary(filtered, boundaries)
 metric1, metric2, metric3 = st.columns(3)
 metric1.metric("필터 적용 출동 건수", f"{filtered['구급보고서번호'].nunique():,}건")
-metric2.metric("발생 행정동 수", f"{(summary['출동건수'] > 0).sum():,}개")
+metric2.metric("발생 행정동 수", f"{filtered['ADM_CD'].nunique():,}개")
 metric3.metric("평균 발생 당시 기온", f"{filtered['시간단위기온'].mean():.1f}°C" if not filtered.empty else "–")
 
-st.plotly_chart(build_map(summary, filtered, boundaries), use_container_width=True, config={"scrollZoom": True})
-st.info("연령대는 중복 없이 0–29세, 30–49세, 50세 이상으로 분류했습니다. 행정동에 마우스를 올리면 필터 결과의 연도·계절·평균 기온을, 빨간 점에 올리면 해당 출동의 기온을 확인할 수 있습니다.")
+st.plotly_chart(build_map(filtered), use_container_width=True, config={"scrollZoom": True})
+st.info("행정동 코드가 없거나 연령이 미상인 사례는 분석에서 제외했습니다. 붉은 원에 마우스를 올리면 개별 출동의 발생 시기·지역·기온을 확인할 수 있습니다.")
