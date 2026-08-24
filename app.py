@@ -14,7 +14,7 @@ DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
 
 SEASON_ORDER = ["봄", "여름", "가을", "겨울"]
-SEASON_COLORS = {"봄": "#2ca25f", "여름": "#e31a1c", "가을": "#f1c40f", "겨울": "#3182bd"}
+SEASON_COLORS = {"봄": "#2ca25f", "여름": "#e31a1c", "가을": "#ffcc00", "겨울": "#3182bd"}
 TIME_BAND_ORDER = ["00~06시", "06~12시", "12~18시", "18~24시"]
 
 @st.cache_data
@@ -87,7 +87,11 @@ def build_map(filtered: pd.DataFrame) -> go.Figure:
                     lon=season_data["lon"],
                     lat=season_data["lat"],
                     mode="markers",
-                    marker={"size": 5.5, "color": SEASON_COLORS[season], "opacity": 0.82},
+                    marker={
+                        "size": 7.15,
+                        "color": SEASON_COLORS[season],
+                        "opacity": 0.82,
+                    },
                     customdata=season_data[["발생시각표시", "지역표시", "기온표시", "계절구분명"]],
                     hovertemplate=(
                         "<b>온열질환 구급출동</b><br>발생 시기: %{customdata[0]}"
@@ -102,7 +106,31 @@ def build_map(filtered: pd.DataFrame) -> go.Figure:
         mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=710,
-        legend={"orientation": "h", "y": 0.02, "x": 0.01, "bgcolor": "rgba(255,255,255,0.85)"},
+        showlegend=False,
+        annotations=[
+            {
+                "xref": "paper",
+                "yref": "paper",
+                "x": 0.985,
+                "y": 0.985,
+                "xanchor": "right",
+                "yanchor": "top",
+                "showarrow": False,
+                "align": "left",
+                "text": (
+                    "<b>원 색상 · 계절</b><br>"
+                    "<span style='color:#2ca25f'>●</span> 봄&nbsp;&nbsp;"
+                    "<span style='color:#e31a1c'>●</span> 여름<br>"
+                    "<span style='color:#ffcc00'>●</span> 가을&nbsp;&nbsp;"
+                    "<span style='color:#3182bd'>●</span> 겨울"
+                ),
+                "bgcolor": "rgba(255, 255, 255, 0.92)",
+                "bordercolor": "#bdbdbd",
+                "borderwidth": 1,
+                "borderpad": 7,
+                "font": {"size": 12, "color": "#222"},
+            }
+        ],
     )
     return fig
 
