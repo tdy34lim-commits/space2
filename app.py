@@ -15,10 +15,6 @@ CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
 
 SEASON_ORDER = ["봄", "여름", "가을", "겨울"]
 
-# Simplified outer boundary of Seoul, kept inline so no boundary file is needed.
-SEOUL_BOUNDARY = [(126.893376, 37.452806), (126.882746, 37.464391), (126.8527, 37.481819), (126.814629, 37.474649), (126.821564, 37.502156), (126.822119, 37.540677), (126.764495, 37.555275), (126.793441, 37.58452), (126.802581, 37.605033), (126.853632, 37.571791), (126.885245, 37.593894), (126.900304, 37.611191), (126.91228, 37.644315), (126.947565, 37.659215), (126.985718, 37.646093), (126.994017, 37.666783), (127.015415, 37.701455), (127.048632, 37.694063), (127.081105, 37.696137), (127.096447, 37.669689), (127.09457, 37.644571), (127.112203, 37.632643), (127.118477, 37.607613), (127.116664, 37.594017), (127.101144, 37.576071), (127.104929, 37.556422), (127.12861, 37.56616), (127.177155, 37.5812), (127.183795, 37.545574), (127.145439, 37.516065), (127.141048, 37.505407), (127.16139, 37.500201), (127.148683, 37.484043), (127.13083, 37.467745), (127.104341, 37.462174), (127.087855, 37.444894), (127.070905, 37.430191), (127.052325, 37.428297), (127.031196, 37.465626), (127.003675, 37.46772), (126.97458, 37.454413), (126.94022, 37.435712), (126.920275, 37.440466), (126.902988, 37.434068), (126.893376, 37.452806)]
-
-
 @st.cache_data
 def load_data() -> pd.DataFrame:
     """Load one row per emergency dispatch and prepare display fields."""
@@ -79,7 +75,7 @@ def build_map(filtered: pd.DataFrame) -> go.Figure:
                 lon=point_data["lon"],
                 lat=point_data["lat"],
                 mode="markers",
-                marker={"size": 11, "color": "#e31a1c", "opacity": 0.82},
+                marker={"size": 5.5, "color": "#e31a1c", "opacity": 0.82},
                 customdata=point_data[["발생시각표시", "지역표시", "기온표시"]],
                 hovertemplate=(
                     "<b>온열질환 구급출동</b><br>발생 시기: %{customdata[0]}"
@@ -88,18 +84,6 @@ def build_map(filtered: pd.DataFrame) -> go.Figure:
                 name="개별 출동 지점",
             )
         )
-
-    # Draw the Seoul outline above the base map and below the point hover layer.
-    fig.add_trace(
-        go.Scattermapbox(
-            lon=[point[0] for point in SEOUL_BOUNDARY],
-            lat=[point[1] for point in SEOUL_BOUNDARY],
-            mode="lines",
-            line={"color": "#111111", "width": 3},
-            hoverinfo="skip",
-            name="서울시 경계",
-        )
-    )
 
     fig.update_layout(
         mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
