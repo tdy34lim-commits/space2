@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -12,6 +15,10 @@ st.set_page_config(page_title="서울 온열질환 구급출동 지도", page_ic
 
 DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
+SEOUL_BOUNDARIES_URL = (
+    "https://raw.githubusercontent.com/raqoon886/Local_HangJeongDong/"
+    "master/hangjeongdong_%EC%84%9C%EC%9A%B8%ED%8A%B9%EB%B3%84%EC%8B%9C.geojson"
+)
 
 SEASON_ORDER = ["봄", "여름", "가을", "겨울"]
 SEASON_COLORS = {"봄": "#2ca25f", "여름": "#e31a1c", "가을": "#ffcc00", "겨울": "#3182bd"}
@@ -78,6 +85,25 @@ def make_hover_data(frame: pd.DataFrame) -> pd.DataFrame:
         lambda x: f"{x:.1f}°C" if pd.notna(x) else "정보 없음"
     )
     return result
+
+
+@st.cache_data
+def load_boundaries() -> dict:
+    """Load public administrative-dong polygons without adding a large file to GitHub."""
+    try:
+        with urlopen(SEOUL_BOUNDARIES_URL, timeout=30) as response:
+            boundaries = json.load(response)
+    except (URLError, TimeoutError, json.JSONDecodeError) as error:
+        raise RuntimeError("행정동 경계 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.") from error
+
+    for feature in boundaries["features"]:
+        props = feature["properties"]
+        code = str(props.get("adm_cd8") or props.get("adm_cd") or props.get("ADM_CD"))
+        props["ADM_CD"] = f"{code}0" if len(code) == 7 else code
+        dong_name = str(props.get("adm_nm") or props.get("ADM_NM")).split()[-1]
+        district_name = str(props.get("sggnm") or "")
+        props["지역표시"] = f"{district_name} {dong_name}".strip()
+    return boundaries
 
 
 def build_incident_map(filtered: pd.DataFrame) -> go.Figure:
@@ -162,95 +188,86 @@ def aggregate_by_dong(filtered: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def build_dong_map(filtered: pd.DataFrame) -> go.Figure:
+def build_dong_map(filtered: pd.DataFrame, boundaries: dict) -> go.Figure:
     summary = aggregate_by_dong(filtered)
+    boundary_base = pd.DataFrame(
+        [
+            {"ADM_CD": str(feature["properties"]["ADM_CD"]), "지역표시": feature["properties"]["지역표시"]}
+            for feature in boundaries["features"]
+        ]
+    )
+    boundary_codes = set(boundary_base["ADM_CD"])
+    region_to_code = boundary_base.drop_duplicates("지역표시").set_index("지역표시")["ADM_CD"]
+    summary["경계코드"] = summary["ADM_CD"].where(summary["ADM_CD"].isin(boundary_codes))
+    summary["경계코드"] = summary["경계코드"].fillna(summary["지역표시"].map(region_to_code))
+    summary = summary.dropna(subset=["경계코드"]).rename(columns={"경계코드": "경계_ADM_CD"})
+    map_data = boundary_base.merge(summary, left_on="ADM_CD", right_on="경계_ADM_CD", how="left", suffixes=("", "_집계"))
+    map_data["출동건수"] = map_data["출동건수"].fillna(0).astype(int)
+    map_data["대표계절"] = map_data["대표계절"].fillna("발생 없음")
+    map_data["평균기온표시"] = map_data["평균기온"].map(
+        lambda x: f"{x:.1f}°C" if pd.notna(x) else "정보 없음"
+    )
     fig = go.Figure()
-    if not summary.empty:
-        summary["평균기온표시"] = summary["평균기온"].map(
-            lambda x: f"{x:.1f}°C" if pd.notna(x) else "정보 없음"
+    fig.add_trace(
+        go.Choroplethmapbox(
+            geojson=boundaries,
+            locations=map_data["ADM_CD"],
+            z=map_data["출동건수"],
+            featureidkey="properties.ADM_CD",
+            zmin=0,
+            zmax=3,
+            colorscale=[[0, "#ffffff"], [0.34, "#fee0d2"], [0.67, "#fc9272"], [1, "#de2d26"]],
+            marker_line_color="rgba(120,120,120,0.45)",
+            marker_line_width=0.45,
+            colorbar={"title": "출동 건수", "tickvals": [0, 1, 2, 3], "ticktext": ["0", "1", "2", "3+"], "thickness": 13, "x": 0.98},
+            customdata=map_data[["지역표시", "출동건수", "대표계절", "평균기온표시"]],
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>출동 건수: %{customdata[1]}건"
+                "<br>가장 많은 계절: %{customdata[2]}<br>평균 발생 당시 기온: %{customdata[3]}<extra></extra>"
+            ),
         )
-        max_count = summary["출동건수"].max()
-        sizes = 10 + 20 * (summary["출동건수"] / max_count) ** 0.5
-        fig.add_trace(
-            go.Scattermapbox(
-                lon=summary["lon"],
-                lat=summary["lat"],
-                mode="markers",
-                marker={"size": sizes, "color": "#7a0177", "opacity": 0.78},
-                customdata=summary[["지역표시", "출동건수", "대표계절", "평균기온표시"]],
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>출동 건수: %{customdata[1]}건"
-                    "<br>가장 많은 계절: %{customdata[2]}<br>평균 발생 당시 기온: %{customdata[3]}<extra></extra>"
-                ),
-            )
-        )
+    )
     fig.update_layout(
         mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=710,
         showlegend=False,
-        annotations=[
-            {
-                "xref": "paper",
-                "yref": "paper",
-                "x": 0.985,
-                "y": 0.985,
-                "xanchor": "right",
-                "yanchor": "top",
-                "showarrow": False,
-                "text": "<b>행정동 집계</b><br>원 크기 = 출동 건수",
-                "bgcolor": "rgba(255,255,255,0.92)",
-                "bordercolor": "#bdbdbd",
-                "borderwidth": 1,
-                "borderpad": 7,
-                "font": {"size": 12, "color": "#222"},
-            }
-        ],
     )
     return fig
 
 
-def build_top10_chart(filtered: pd.DataFrame) -> go.Figure:
-    top10 = aggregate_by_dong(filtered).head(10).sort_values("출동건수")
-    fig = go.Figure(
-        go.Bar(
-            x=top10["출동건수"],
-            y=top10["지역표시"],
-            orientation="h",
-            marker_color="#d7301f",
-            text=top10["출동건수"],
-            textposition="outside",
-            hovertemplate="%{y}<br>출동 건수: %{x}건<extra></extra>",
-        )
+def build_summary_heatmap(filtered: pd.DataFrame, age_group: str, scale_max: int, show_scale: bool) -> go.Figure:
+    selected = filtered[filtered["연령대"] == age_group]
+    counts = (
+        selected.groupby(["시간대", "신고월"])["구급보고서번호"]
+        .nunique()
+        .unstack(fill_value=0)
+        .reindex(index=TIME_BAND_ORDER, columns=range(1, 13), fill_value=0)
     )
-    fig.update_layout(
-        title="출동 건수 상위 10개 행정동",
-        margin={"l": 0, "r": 35, "t": 42, "b": 25},
-        height=360,
-        xaxis_title="출동 건수",
-        yaxis_title=None,
-        plot_bgcolor="white",
-    )
-    return fig
-
-
-def build_time_trend_chart(filtered: pd.DataFrame) -> go.Figure:
+    labels = counts.where(counts > 0, "")
     fig = go.Figure()
-    for band, color in zip(TIME_BAND_ORDER, ["#6a3d9a", "#1f78b4", "#e31a1c", "#ff7f00"]):
-        counts = (
-            filtered[filtered["시간대"] == band]
-            .groupby("신고월")["구급보고서번호"]
-            .nunique()
-            .reindex(range(1, 13), fill_value=0)
+    fig.add_trace(
+        go.Heatmap(
+            z=counts.values,
+            x=[f"{month}월" for month in counts.columns],
+            y=counts.index,
+            text=labels.values,
+            texttemplate="%{text}",
+            textfont={"size": 12},
+            colorscale=[[0, "#ffffff"], [1, "#d7301f"]],
+            zmin=0,
+            zmax=max(1, scale_max),
+            showscale=show_scale,
+            colorbar={"title": "건수", "thickness": 12} if show_scale else None,
+            hovertemplate="연령대: " + age_group + "<br>월: %{x}<br>시간대: %{y}<br>출동 건수: %{z}건<extra></extra>",
         )
-        fig.add_trace(go.Scatter(x=list(range(1, 13)), y=counts, mode="lines+markers", name=band, line={"color": color}))
+    )
     fig.update_layout(
-        title="월별·시간대별 출동 추이",
-        margin={"l": 0, "r": 10, "t": 42, "b": 25},
+        title=f"{age_group}: 월 × 시간대",
+        margin={"l": 20, "r": 10, "t": 45, "b": 35},
         height=360,
-        xaxis={"title": "신고월", "tickmode": "linear", "dtick": 1},
-        yaxis_title="출동 건수",
-        legend={"orientation": "h", "y": 1.12, "x": 0},
+        xaxis={"side": "bottom", "tickangle": 0},
+        yaxis={"autorange": "reversed"},
         plot_bgcolor="white",
     )
     return fig
@@ -264,7 +281,7 @@ data = load_data()
 # Filters sit in the upper-right area above the map.
 view_col, year_col, time_col, age_col = st.columns([1.6, 1.15, 1.15, 1.15])
 with view_col:
-    selected_view = st.radio("지도 보기", ["개별 출동", "행정동 집계"], horizontal=True)
+    selected_view = st.radio("지도 보기", ["개별 출동", "행정동 집계", "요약 그래프"], horizontal=True)
 with year_col:
     selected_year = st.selectbox("연도", ["전체"] + sorted(data["신고연도"].dropna().astype(int).unique().tolist()))
 with time_col:
@@ -288,14 +305,27 @@ metric3.metric("평균 발생 당시 기온", f"{filtered['시간단위기온'].
 
 if selected_view == "개별 출동":
     st.plotly_chart(build_incident_map(filtered), use_container_width=True, config={"scrollZoom": True})
+elif selected_view == "행정동 집계":
+    try:
+        boundaries = load_boundaries()
+    except RuntimeError as error:
+        st.error(str(error))
+        st.stop()
+    st.plotly_chart(build_dong_map(filtered, boundaries), use_container_width=True, config={"scrollZoom": True})
 else:
-    st.plotly_chart(build_dong_map(filtered), use_container_width=True, config={"scrollZoom": True})
-
-left_chart, right_chart = st.columns(2)
-with left_chart:
-    st.plotly_chart(build_top10_chart(filtered), use_container_width=True)
-with right_chart:
-    st.plotly_chart(build_time_trend_chart(filtered), use_container_width=True)
+    st.subheader("연령대별 월·시간대 출동 분포")
+    st.caption("각 칸은 해당 월과 시간대의 출동 건수입니다. 숫자가 있는 칸만 표시해 읽기 쉽게 구성했습니다.")
+    heatmap_scale = 0
+    for age_group in ["0~29세", "30~49세", "50세 이상"]:
+        count_table = filtered[filtered["연령대"] == age_group].groupby(["시간대", "신고월"])["구급보고서번호"].nunique()
+        heatmap_scale = max(heatmap_scale, int(count_table.max()) if not count_table.empty else 0)
+    heatmap_columns = st.columns(3)
+    for index, age_group in enumerate(["0~29세", "30~49세", "50세 이상"]):
+        with heatmap_columns[index]:
+            st.plotly_chart(
+                build_summary_heatmap(filtered, age_group, heatmap_scale, show_scale=index == 2),
+                use_container_width=True,
+            )
 
 download_columns = ["구급보고서번호", "발생시각표시", "지역표시", "신고연도", "신고월", "시간대", "연령대", "계절구분명", "시간단위기온"]
 st.download_button(
@@ -304,4 +334,4 @@ st.download_button(
     file_name="온열질환_구급출동_필터결과.csv",
     mime="text/csv",
 )
-st.info("개별 출동 보기에서는 계절별 색의 원을, 행정동 집계 보기에서는 출동 건수에 비례한 보라색 원을 확인할 수 있습니다.")
+st.info("개별 출동 보기에서는 계절별 색의 원을, 행정동 집계 보기에서는 0건(흰색)부터 3건 이상(붉은색)까지의 색상으로 출동 건수를 확인할 수 있습니다.")
