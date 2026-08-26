@@ -14,11 +14,11 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 
-st.set_page_config(page_title="서울 온열질환 발생 분포 및 소방기관 권역", page_icon="🌡️", layout="wide")
+st.set_page_config(page_title="서울 온열질환 발생 분포 및 소방서 권역", page_icon="🌡️", layout="wide")
 
 DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
-FIRE_FACILITIES_PATH = DATA_DIR / "fire_facilities.csv"
+FIRE_STATIONS_PATH = DATA_DIR / "fire_stations.csv"
 SEOUL_BOUNDARIES_URL = (
     "https://raw.githubusercontent.com/raqoon886/Local_HangJeongDong/"
     "master/hangjeongdong_%EC%84%9C%EC%9A%B8%ED%8A%B9%EB%B3%84%EC%8B%9C.geojson"
@@ -95,14 +95,14 @@ def make_hover_data(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data
-def load_fire_facilities() -> pd.DataFrame:
-    facilities = pd.read_csv(FIRE_FACILITIES_PATH, encoding="utf-8-sig")
-    x = pd.to_numeric(facilities["X좌표"], errors="coerce").to_numpy()
-    y = pd.to_numeric(facilities["Y좌표"], errors="coerce").to_numpy()
+def load_fire_stations() -> pd.DataFrame:
+    stations = pd.read_csv(FIRE_STATIONS_PATH, encoding="utf-8-sig")
+    x = pd.to_numeric(stations["X좌표"], errors="coerce").to_numpy()
+    y = pd.to_numeric(stations["Y좌표"], errors="coerce").to_numpy()
     lon, lat = Transformer.from_crs("EPSG:5186", "EPSG:4326", always_xy=True).transform(x, y)
-    facilities["lon"] = lon
-    facilities["lat"] = lat
-    return facilities.dropna(subset=["lon", "lat"])
+    stations["lon"] = lon
+    stations["lat"] = lat
+    return stations.dropna(subset=["lon", "lat"])
 
 
 def circle_coordinates(lon: float, lat: float, radius_m: float = 1000, steps: int = 48) -> tuple[list[float], list[float]]:
@@ -171,11 +171,11 @@ def station_coverage_regions(
             for part in polygon_parts(geometry.difference(coverage)):
                 updated.append((part, names))
             for part in polygon_parts(geometry.intersection(coverage)):
-                updated.append((part, names | frozenset([station["소방기관명"]])))
+                updated.append((part, names | frozenset([station["소방서명"]])))
 
         uncovered = coverage if existing_union is None else coverage.difference(existing_union)
         for part in polygon_parts(uncovered):
-            updated.append((part, frozenset([station["소방기관명"]])))
+            updated.append((part, frozenset([station["소방서명"]])))
         regions = updated
 
     return [
@@ -208,7 +208,7 @@ def load_boundaries() -> dict:
     return boundaries
 
 
-def build_incident_map(filtered: pd.DataFrame, fire_facilities: pd.DataFrame | None = None) -> go.Figure:
+def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | None = None) -> go.Figure:
     fig = go.Figure()
     if not filtered.empty:
         point_data = make_hover_data(filtered)
@@ -246,9 +246,9 @@ def build_incident_map(filtered: pd.DataFrame, fire_facilities: pd.DataFrame | N
                 )
             )
 
-    if fire_facilities is not None:
+    if fire_stations is not None:
         for circle_lon, circle_lat, station_names in station_coverage_regions(
-            fire_facilities, SEOUL_BOUNDARY_VERSION
+            fire_stations, SEOUL_BOUNDARY_VERSION
         ):
             fig.add_trace(
                 go.Scattermap(
@@ -259,7 +259,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_facilities: pd.DataFrame | N
                     fillcolor="rgba(220, 38, 38, 0.07)",
                     line={"color": "rgba(220, 38, 38, 0.16)", "width": 1},
                     text=[station_names] * len(circle_lon),
-                    hovertemplate="<b>반경 2km 내 소방기관</b><br>%{text}<extra></extra>",
+                    hovertemplate="<b>반경 2km 내 소방서</b><br>%{text}<extra></extra>",
                     showlegend=False,
                 )
             )
@@ -414,11 +414,11 @@ def build_summary_heatmap(filtered: pd.DataFrame, age_group: str, scale_max: int
     return fig
 
 
-st.title("서울 온열질환 발생 분포 및 소방기관 권역")
+st.title("서울 온열질환 발생 분포 및 소방서 권역")
 st.caption("2020–2022년 온열질환 구급출동 · 행정동 코드 또는 연령 정보가 없는 사례는 제외")
 
 data = load_data()
-fire_facilities = load_fire_facilities()
+fire_stations = load_fire_stations()
 
 # Filters sit in the upper-right area above the map.
 view_col, year_col, time_col, age_col = st.columns([1.6, 1.15, 1.15, 1.15])
@@ -440,9 +440,9 @@ if selected_time_band != "전체":
 if selected_age != "전체":
     filtered = filtered[filtered["연령대"] == selected_age]
 
-show_fire_facilities = False
+show_fire_stations = False
 if selected_view == "개별 출동":
-    show_fire_facilities = st.toggle("소방기관 반경 2km 표시", value=False)
+    show_fire_stations = st.toggle("소방서 반경 2km 표시", value=False)
 
 metric1, metric2, metric3 = st.columns(3)
 metric1.metric("필터 적용 출동 건수", f"{filtered['구급보고서번호'].nunique():,}건")
@@ -450,7 +450,7 @@ metric2.metric("발생 행정동 수", f"{filtered['ADM_CD'].nunique():,}개")
 metric3.metric("평균 발생 당시 기온", f"{filtered['시간단위기온'].mean():.1f}°C" if not filtered.empty else "–")
 
 if selected_view == "개별 출동":
-    station_overlay = fire_facilities if show_fire_facilities else None
+    station_overlay = fire_stations if show_fire_stations else None
     st.plotly_chart(build_incident_map(filtered, station_overlay), use_container_width=True, config={"scrollZoom": True})
 elif selected_view == "행정동 집계":
     try:
