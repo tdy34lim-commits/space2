@@ -23,8 +23,9 @@ SEOUL_BOUNDARIES_URL = (
 )
 
 SEASON_ORDER = ["봄", "여름", "가을", "겨울"]
-SEASON_COLORS = {"봄": "#2ca25f", "여름": "#e31a1c", "가을": "#ffcc00", "겨울": "#3182bd"}
+SEASON_COLORS = {"봄": "#448a62", "여름": "#bb4243", "가을": "#ccad33", "겨울": "#4d7ea1"}
 TIME_BAND_ORDER = ["00~06시", "06~12시", "12~18시", "18~24시"]
+SEOUL_BOUNDARY = [(126.893376, 37.452806), (126.882746, 37.464391), (126.8527, 37.481819), (126.814629, 37.474649), (126.821564, 37.502156), (126.822119, 37.540677), (126.764495, 37.555275), (126.793441, 37.58452), (126.802581, 37.605033), (126.853632, 37.571791), (126.885245, 37.593894), (126.900304, 37.611191), (126.91228, 37.644315), (126.947565, 37.659215), (126.985718, 37.646093), (126.994017, 37.666783), (127.015415, 37.701455), (127.048632, 37.694063), (127.081105, 37.696137), (127.096447, 37.669689), (127.09457, 37.644571), (127.112203, 37.632643), (127.118477, 37.607613), (127.116664, 37.594017), (127.101144, 37.576071), (127.104929, 37.556422), (127.12861, 37.56616), (127.177155, 37.5812), (127.183795, 37.545574), (127.145439, 37.516065), (127.141048, 37.505407), (127.16139, 37.500201), (127.148683, 37.484043), (127.13083, 37.467745), (127.104341, 37.462174), (127.087855, 37.444894), (127.070905, 37.430191), (127.052325, 37.428297), (127.031196, 37.465626), (127.003675, 37.46772), (126.97458, 37.454413), (126.94022, 37.435712), (126.920275, 37.440466), (126.902988, 37.434068), (126.893376, 37.452806)]
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
@@ -144,7 +145,7 @@ def build_incident_map(filtered: pd.DataFrame) -> go.Figure:
                     lat=season_data["lat"],
                     mode="markers",
                     marker={
-                        "size": 7.15,
+                        "size": 4.29,
                         "color": SEASON_COLORS[season],
                         "opacity": 0.65,
                     },
@@ -157,6 +158,17 @@ def build_incident_map(filtered: pd.DataFrame) -> go.Figure:
                     name=season,
                 )
             )
+
+    fig.add_trace(
+        go.Scattermapbox(
+            lon=[point[0] for point in SEOUL_BOUNDARY],
+            lat=[point[1] for point in SEOUL_BOUNDARY],
+            mode="lines",
+            line={"color": "#1f1f1f", "width": 1},
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
 
     fig.update_layout(
         mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
@@ -175,10 +187,10 @@ def build_incident_map(filtered: pd.DataFrame) -> go.Figure:
                 "align": "left",
                 "text": (
                     "<b>원 색상 · 계절</b><br>"
-                    "<span style='color:#2ca25f'>●</span> 봄&nbsp;&nbsp;"
-                    "<span style='color:#e31a1c'>●</span> 여름<br>"
-                    "<span style='color:#ffcc00'>●</span> 가을&nbsp;&nbsp;"
-                    "<span style='color:#3182bd'>●</span> 겨울"
+                    "<span style='color:#448a62'>●</span> 봄&nbsp;&nbsp;"
+                    "<span style='color:#bb4243'>●</span> 여름<br>"
+                    "<span style='color:#ccad33'>●</span> 가을&nbsp;&nbsp;"
+                    "<span style='color:#4d7ea1'>●</span> 겨울"
                 ),
                 "bgcolor": "rgba(255, 255, 255, 0.92)",
                 "bordercolor": "#bdbdbd",
@@ -263,7 +275,7 @@ def build_dong_map(filtered: pd.DataFrame, boundaries: dict) -> go.Figure:
 def build_fire_station_map(stations: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     for _, station in stations.iterrows():
-        circle_lon, circle_lat = circle_coordinates(station["lon"], station["lat"])
+        circle_lon, circle_lat = circle_coordinates(station["lon"], station["lat"], radius_m=2500)
         fig.add_trace(
             go.Scattermapbox(
                 lon=circle_lon,
@@ -281,9 +293,9 @@ def build_fire_station_map(stations: pd.DataFrame) -> go.Figure:
             lon=stations["lon"],
             lat=stations["lat"],
             mode="markers",
-            marker={"size": 10, "color": "#991b1b", "opacity": 0.95},
+            marker={"size": 3, "color": "#111111", "opacity": 0.95},
             text=stations["소방서명"],
-            hovertemplate="<b>%{text}</b><br>소방서 반경: 1km<extra></extra>",
+            hovertemplate="<b>%{text}</b><br>소방서 반경: 2.5km<extra></extra>",
             name="소방서",
         )
     )
@@ -301,7 +313,7 @@ def build_fire_station_map(stations: pd.DataFrame) -> go.Figure:
                 "xanchor": "right",
                 "yanchor": "top",
                 "showarrow": False,
-                "text": "<b>소방서 분포</b><br>반투명 붉은 원 = 반경 1km",
+                "text": "<b>소방서 분포</b><br>반투명 붉은 원 = 반경 2.5km",
                 "bgcolor": "rgba(255, 255, 255, 0.92)",
                 "bordercolor": "#bdbdbd",
                 "borderwidth": 1,
@@ -379,7 +391,7 @@ if selected_age != "전체":
 metric1, metric2, metric3 = st.columns(3)
 if selected_view == "소방서 분포":
     metric1.metric("소방서 수", f"{len(fire_stations):,}개")
-    metric2.metric("표시 반경", "1km")
+    metric2.metric("표시 반경", "2.5km")
     metric3.metric("지도 범위", "서울특별시")
 else:
     metric1.metric("필터 적용 출동 건수", f"{filtered['구급보고서번호'].nunique():,}건")
