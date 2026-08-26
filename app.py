@@ -217,6 +217,16 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
                     lon=season_data["lon"],
                     lat=season_data["lat"],
                     mode="markers",
+                    marker={"size": 5.8, "color": "#FFFFFF", "opacity": 0.95},
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+            fig.add_trace(
+                go.Scattermapbox(
+                    lon=season_data["lon"],
+                    lat=season_data["lat"],
+                    mode="markers",
                     marker={
                         "size": 4.29,
                         "color": SEASON_COLORS[season],
