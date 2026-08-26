@@ -455,7 +455,6 @@ elif selected_view == "행정동 집계":
     st.plotly_chart(build_dong_map(filtered, boundaries), use_container_width=True, config={"scrollZoom": True})
 else:
     st.subheader("연령대별 월·시간대 출동 분포")
-    st.caption("각 칸은 해당 월과 시간대의 출동 건수입니다. 숫자가 있는 칸만 표시해 읽기 쉽게 구성했습니다.")
     heatmap_scale = 0
     for age_group in ["0~29세", "30~49세", "50세 이상"]:
         count_table = filtered[filtered["연령대"] == age_group].groupby(["시간대", "신고월"])["구급보고서번호"].nunique()
@@ -468,11 +467,4 @@ else:
                 use_container_width=True,
             )
 
-download_columns = ["구급보고서번호", "발생시각표시", "지역표시", "신고연도", "신고월", "시간대", "연령대", "계절구분명", "시간단위기온"]
-st.download_button(
-    "필터 적용 출동 데이터 CSV 다운로드",
-    data=filtered[download_columns].to_csv(index=False).encode("utf-8-sig"),
-    file_name="온열질환_구급출동_필터결과.csv",
-    mime="text/csv",
-)
 st.info("개별 출동 보기에서는 계절별 색의 원을, 행정동 집계 보기에서는 0건(흰색)부터 3건 이상(붉은색)까지의 색상으로 출동 건수를 확인할 수 있습니다.")
