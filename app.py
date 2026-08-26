@@ -217,7 +217,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
                     lon=season_data["lon"],
                     lat=season_data["lat"],
                     mode="markers",
-                    marker={"size": 5.8, "color": "#FFFFFF", "opacity": 0.95},
+                    marker={"size": 7.54, "color": "#FFFFFF", "opacity": 0.95},
                     hoverinfo="skip",
                     showlegend=False,
                 )
@@ -228,7 +228,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
                     lat=season_data["lat"],
                     mode="markers",
                     marker={
-                        "size": 4.29,
+                        "size": 5.58,
                         "color": SEASON_COLORS[season],
                         "opacity": 0.95 if season == "가을" else 0.55,
                     },
