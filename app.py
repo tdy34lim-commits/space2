@@ -213,7 +213,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
             if season_data.empty:
                 continue
             fig.add_trace(
-                go.Scattermapbox(
+                go.Scattermap(
                     lon=season_data["lon"],
                     lat=season_data["lat"],
                     mode="markers",
@@ -223,7 +223,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
                 )
             )
             fig.add_trace(
-                go.Scattermapbox(
+                go.Scattermap(
                     lon=season_data["lon"],
                     lat=season_data["lat"],
                     mode="markers",
@@ -245,7 +245,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
     if fire_stations is not None:
         for circle_lon, circle_lat, station_names in station_coverage_regions(fire_stations):
             fig.add_trace(
-                go.Scattermapbox(
+                go.Scattermap(
                     lon=circle_lon,
                     lat=circle_lat,
                     mode="lines",
@@ -259,7 +259,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
             )
 
     fig.add_trace(
-        go.Scattermapbox(
+        go.Scattermap(
             lon=[point[0] for point in SEOUL_BOUNDARY],
             lat=[point[1] for point in SEOUL_BOUNDARY],
             mode="lines",
@@ -270,7 +270,7 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
     )
 
     fig.update_layout(
-        mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
+        map={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=710,
         showlegend=False,
@@ -344,7 +344,7 @@ def build_dong_map(filtered: pd.DataFrame, boundaries: dict) -> go.Figure:
     )
     fig = go.Figure()
     fig.add_trace(
-        go.Choroplethmapbox(
+        go.Choroplethmap(
             geojson=boundaries,
             locations=map_data["ADM_CD"],
             z=map_data["출동건수"],
@@ -363,7 +363,7 @@ def build_dong_map(filtered: pd.DataFrame, boundaries: dict) -> go.Figure:
         )
     )
     fig.update_layout(
-        mapbox={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
+        map={"style": "carto-positron", "center": {"lat": 37.5665, "lon": 126.9780}, "zoom": 9.15},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=710,
         showlegend=False,
