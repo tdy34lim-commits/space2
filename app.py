@@ -11,9 +11,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from pyproj import Transformer
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 
-st.set_page_config(page_title="서울 온열질환 구급출동 지도", page_icon="🌡️", layout="wide")
+st.set_page_config(page_title="서울 온열질환 발생 분포 및 소방서 권역", page_icon="🌡️", layout="wide")
 
 DATA_DIR = Path(__file__).parent / "data"
 CSV_PATH = DATA_DIR / "heat_illness_combined-2.csv"
@@ -138,6 +139,53 @@ def clipped_circle_polygons(lon: float, lat: float, radius_m: float) -> list[tup
     ]
 
 
+def polygon_parts(geometry):
+    """Yield Polygon members from Polygon, MultiPolygon, or GeometryCollection values."""
+    if geometry.is_empty:
+        return
+    if geometry.geom_type == "Polygon":
+        yield geometry
+    elif hasattr(geometry, "geoms"):
+        for member in geometry.geoms:
+            yield from polygon_parts(member)
+
+
+@st.cache_data
+def station_coverage_regions(stations: pd.DataFrame) -> list[tuple[list[float], list[float], str]]:
+    """Partition 2 km service areas so each polygon carries every covering station name."""
+    city_boundary = Polygon(SEOUL_BOUNDARY)
+    regions: list[tuple[object, frozenset[str]]] = []
+
+    for _, station in stations.iterrows():
+        circle_lon, circle_lat = circle_coordinates(station["lon"], station["lat"], radius_m=2000)
+        coverage = Polygon(zip(circle_lon, circle_lat)).intersection(city_boundary)
+        if coverage.is_empty:
+            continue
+
+        existing_union = unary_union([geometry for geometry, _ in regions]) if regions else None
+        updated: list[tuple[object, frozenset[str]]] = []
+        for geometry, names in regions:
+            for part in polygon_parts(geometry.difference(coverage)):
+                updated.append((part, names))
+            for part in polygon_parts(geometry.intersection(coverage)):
+                updated.append((part, names | frozenset([station["소방서명"]])))
+
+        uncovered = coverage if existing_union is None else coverage.difference(existing_union)
+        for part in polygon_parts(uncovered):
+            updated.append((part, frozenset([station["소방서명"]])))
+        regions = updated
+
+    return [
+        (
+            [point[0] for point in polygon.exterior.coords],
+            [point[1] for point in polygon.exterior.coords],
+            "<br>".join(sorted(names)),
+        )
+        for polygon, names in regions
+        if polygon.area > 1e-10
+    ]
+
+
 @st.cache_data
 def load_boundaries() -> dict:
     """Load public administrative-dong polygons without adding a large file to GitHub."""
@@ -196,32 +244,17 @@ def build_incident_map(filtered: pd.DataFrame, fire_stations: pd.DataFrame | Non
             )
 
     if fire_stations is not None:
-        for _, station in fire_stations.iterrows():
-            for circle_lon, circle_lat in clipped_circle_polygons(station["lon"], station["lat"], radius_m=2000):
-                fig.add_trace(
-                    go.Scattermapbox(
-                        lon=circle_lon,
-                        lat=circle_lat,
-                        mode="lines",
-                        fill="toself",
-                        fillcolor="rgba(220, 38, 38, 0.07)",
-                        line={"color": "rgba(220, 38, 38, 0.16)", "width": 1},
-                        hoverinfo="skip",
-                        showlegend=False,
-                    )
-                )
-        for _, station in fire_stations.iterrows():
-            square_lon, square_lat = square_coordinates(station["lon"], station["lat"], side_m=200)
+        for circle_lon, circle_lat, station_names in station_coverage_regions(fire_stations):
             fig.add_trace(
                 go.Scattermapbox(
-                    lon=square_lon,
-                    lat=square_lat,
+                    lon=circle_lon,
+                    lat=circle_lat,
                     mode="lines",
                     fill="toself",
-                    fillcolor="rgba(0, 0, 0, 1)",
-                    line={"color": "#000000", "width": 1},
-                    text=[station["소방서명"]] * len(square_lon),
-                    hovertemplate="<b>%{text}</b><br>소방서 반경: 2km<extra></extra>",
+                    fillcolor="rgba(220, 38, 38, 0.07)",
+                    line={"color": "rgba(220, 38, 38, 0.16)", "width": 1},
+                    text=[station_names] * len(circle_lon),
+                    hovertemplate="<b>반경 2km 내 소방서</b><br>%{text}<extra></extra>",
                     showlegend=False,
                 )
             )
@@ -376,7 +409,7 @@ def build_summary_heatmap(filtered: pd.DataFrame, age_group: str, scale_max: int
     return fig
 
 
-st.title("서울 온열질환 구급출동 현황")
+st.title("서울 온열질환 발생 분포 및 소방서 권역")
 st.caption("2020–2022년 온열질환 구급출동 · 행정동 코드 또는 연령 정보가 없는 사례는 제외")
 
 data = load_data()
